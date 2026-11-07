@@ -225,6 +225,19 @@ describe('failure handling', () => {
   });
 });
 
+describe('database outage', () => {
+  it('a failed cycle sends nothing, does not wedge the manager, and the next cycle recovers', async () => {
+    h = await createHarness();
+    const real = h.repos.ignores.listActive.bind(h.repos.ignores);
+    let down = true;
+    h.repos.ignores.listActive = async (now: Date) => { if (down) throw new Error('connection terminated'); return real(now); };
+    await expect(h.tick([A()], t('12:00'))).rejects.toThrow(/connection terminated/);
+    expect(h.notifier.sent).toHaveLength(0);
+    down = false;
+    expect((await h.tick([A()], t('12:00:10'))).sent).toBe(1); // not wedged by the failed cycle, alert not lost
+  });
+});
+
 describe('geography in the pipeline', () => {
   it('territorial waters trigger alerts (Indian 12 NM sea)', async () => {
     h = await createHarness();

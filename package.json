@@ -14,11 +14,14 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx src/db/migrate-cli.ts",
-    "deploy-commands": "tsx src/discord/deploy-commands.ts",
+    "db:migrate": "node dist/db/migrate-cli.js",
+    "deploy-commands": "node dist/discord/deploy-commands.js",
     "build:geodata": "tsx scripts/build-geodata.ts",
     "update:aircraft": "tsx scripts/update-aircraft-types.ts",
-    "probe:geofs": "tsx scripts/probe-geofs.ts"
+    "dry-run": "tsx scripts/live-dry-run.ts",
+    "probe:geofs": "tsx scripts/probe-geofs.ts",
+    "db:migrate:dev": "tsx src/db/migrate-cli.ts",
+    "deploy-commands:dev": "tsx src/discord/deploy-commands.ts"
   },
   "dependencies": {
     "@turf/bbox": "^7.4.0",

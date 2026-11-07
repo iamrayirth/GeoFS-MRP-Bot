@@ -6,6 +6,7 @@ const bool = (def: boolean) =>
     (v) => (v === undefined || v === '' ? String(def) : v),
     z.enum(['true', 'false', '1', '0']).transform((v) => v === 'true' || v === '1'),
   );
+const blankToUndef = (v: unknown) => (v === '' ? undefined : v);
 const csv = z
   .string()
   .default('')
@@ -19,8 +20,8 @@ const snowflakeList = csv.refine((a) => a.every((x) => /^\d{15,25}$/.test(x)), '
 
 const schema = z.object({
   DISCORD_TOKEN: z.string().min(20, 'DISCORD_TOKEN is required'),
-  DISCORD_CLIENT_ID: z.string().regex(/^\d{15,25}$/).optional(),
-  DISCORD_GUILD_ID: z.preprocess((v) => (v === '' ? undefined : v), z.string().regex(/^\d{15,25}$/).optional()),
+  DISCORD_CLIENT_ID: z.preprocess(blankToUndef, z.string().regex(/^\d{15,25}$/).optional()),
+  DISCORD_GUILD_ID: z.preprocess(blankToUndef, z.string().regex(/^\d{15,25}$/).optional()),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   DATABASE_SSL: bool(false),
   AUTO_MIGRATE: bool(true),
