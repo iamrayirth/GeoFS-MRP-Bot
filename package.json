@@ -1,0 +1,50 @@
+{
+  "name": "geofs-mrp-bot",
+  "version": "1.0.0",
+  "description": "Discord bot that monitors live GeoFS multiplayer aircraft and alerts when matching aircraft enter configured countries (incl. territorial waters).",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/db/migrate-cli.ts",
+    "deploy-commands": "tsx src/discord/deploy-commands.ts",
+    "build:geodata": "tsx scripts/build-geodata.ts",
+    "update:aircraft": "tsx scripts/update-aircraft-types.ts",
+    "probe:geofs": "tsx scripts/probe-geofs.ts"
+  },
+  "dependencies": {
+    "@turf/bbox": "^7.4.0",
+    "@turf/boolean-point-in-polygon": "^7.4.0",
+    "@turf/helpers": "^7.4.0",
+    "discord.js": "^14.28.1",
+    "dotenv": "^18.0.9",
+    "drizzle-orm": "^0.45.4",
+    "i18n-iso-countries": "^7.14.0",
+    "pg": "^8.23.1",
+    "pino": "^10.4.0",
+    "topojson-client": "^3.1.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.15",
+    "@types/geojson": "^7946.0.16",
+    "@types/node": "^26.6.6",
+    "@types/pg": "^8.23.1",
+    "@types/topojson-client": "^3.1.5",
+    "drizzle-kit": "^0.31.11",
+    "mapshaper": "^0.7.101",
+    "pino-pretty": "^13.2.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0",
+    "world-atlas": "^2.0.2"
+  }
+}
