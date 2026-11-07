@@ -1,9 +1,11 @@
 import 'dotenv/config';
 import { z } from 'zod';
 
-const bool = z
-  .enum(['true', 'false', '1', '0'])
-  .transform((v) => v === 'true' || v === '1');
+const bool = (def: boolean) =>
+  z.preprocess(
+    (v) => (v === undefined || v === '' ? String(def) : v),
+    z.enum(['true', 'false', '1', '0']).transform((v) => v === 'true' || v === '1'),
+  );
 const csv = z
   .string()
   .default('')
@@ -20,8 +22,8 @@ const schema = z.object({
   DISCORD_CLIENT_ID: z.string().regex(/^\d{15,25}$/).optional(),
   DISCORD_GUILD_ID: z.preprocess((v) => (v === '' ? undefined : v), z.string().regex(/^\d{15,25}$/).optional()),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-  DATABASE_SSL: bool.default('false'),
-  AUTO_MIGRATE: bool.default('true'),
+  DATABASE_SSL: bool(false),
+  AUTO_MIGRATE: bool(true),
   AUTHORIZED_USER_IDS: snowflakeList,
   ADMIN_ROLE_IDS: snowflakeList,
   GEOFS_API: z.string().url().default('https://mps.geo-fs.com/map'),
@@ -31,7 +33,7 @@ const schema = z.object({
   HTTP_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60_000).default(15_000),
   HEALTH_PORT: z.coerce.number().int().min(0).max(65535).default(8080),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
-  LOG_PRETTY: bool.default('false'),
+  LOG_PRETTY: bool(false),
 });
 
 export type Config = z.infer<typeof schema>;

@@ -2,7 +2,9 @@
  * Builds data/geodata.json.gz — the bundled country geometry used by the geo engine.
  *
  * Sources (see docs/GEODATA.md):
- *  - LAND:  Natural Earth 1:10m Admin-0 countries (public domain), via the `world-atlas` npm package.
+ *  - LAND:  Natural Earth 1:10m Admin-0 countries v5.1.2 (public domain), full-resolution GeoJSON from the official
+ *           nvkelso/natural-earth-vector repository. (The `world-atlas` npm TopoJSON is quantised to a ~0.4 km grid, which
+ *           collapses microstates such as Vatican City, so it is NOT used.)
  *  - SEA:   Marine Regions / VLIZ "Maritime Boundaries v12" via the public WFS
  *           (layers eez_12nm = Territorial Seas, eez_internal_waters, eez_archipelagic_waters), CC-BY 4.0.
  *  - TABLE: territory -> sovereign mapping from the VLIZ eez_land attribute table (attributes only; its geometry is
@@ -14,10 +16,11 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { createRequire } from 'node:module';
-import { feature } from 'topojson-client';
 import countries from 'i18n-iso-countries';
 
 const require = createRequire(import.meta.url);
+const NE_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_10m_admin_0_countries.geojson';
+const LAND_SIMPLIFY_METERS = 75;
 const WFS = 'https://geo.vliz.be/geoserver/MarineRegions/wfs';
 const CACHE = '.cache/geodata';
 // Territorial seas (the zone that matters most) keep a fine tolerance; internal waters adjoin the coast and are coarser.
@@ -104,9 +107,18 @@ async function main() {
     }
   }
 
-  // 3. land from Natural Earth
-  const topo = require('world-atlas/countries-10m.json');
-  const land: any = feature(topo, topo.objects.countries);
+  // 3. land from Natural Earth (full resolution, lightly simplified)
+  const neRaw = `${CACHE}/ne_10m_admin_0_countries.geojson`;
+  await download(NE_URL, neRaw);
+  const neOut = `${CACHE}/ne_land.simplified.json`;
+  console.log(`simplifying Natural Earth land @ ${LAND_SIMPLIFY_METERS} m`);
+  execFileSync(
+    'node',
+    [require.resolve('mapshaper/bin/mapshaper'), '-i', neRaw, '-simplify', `interval=${LAND_SIMPLIFY_METERS}`, 'keep-shapes',
+      '-filter-fields', 'NAME,ISO_N3', '-o', neOut, 'precision=0.00001'],
+    { stdio: 'inherit' },
+  );
+  const land: any = JSON.parse(readFileSync(neOut, 'utf8'));
   // Natural Earth entities without a numeric id. Disputed/leased areas list every claimant (alert logic treats a
   // match on ANY claimant as a match and shows the full list). Anything not listed here is skipped on purpose.
   const MANUAL: Record<string, { sov: string[]; ter: string } | null> = {
@@ -135,19 +147,25 @@ async function main() {
     'S. Geo. and the Is.': { sov: ['GBR', 'ARG'], ter: 'South Georgia and the South Sandwich Islands' },
     'Falkland Is.': { sov: ['GBR', 'ARG'], ter: 'Falkland Islands' },
     'W. Sahara': { sov: ['MAR', 'ESH'], ter: 'Western Sahara' },
+    France: { sov: ['FRA'], ter: 'France' },
+    Norway: { sov: ['NOR'], ter: 'Norway' },
+    'Brazilian I.': { sov: ['BRA'], ter: 'Trindade and Martin Vaz' },
+    'Southern Patagonian Ice Field': { sov: ['CHL', 'ARG'], ter: 'Southern Patagonian Ice Field' },
+    'Bir Tawil': null, // terra nullius: neither Egypt nor Sudan claims it - intentionally left unresolved
     Antarctica: null, // not a country
   };
   const unmapped: string[] = [];
   for (const f of land.features) {
-    const name: string = f.properties.name;
+    const name: string = f.properties.NAME;
+    const un = f.properties.ISO_N3 && f.properties.ISO_N3 !== '-99' && f.properties.ISO_N3 !== '-099' ? Number(f.properties.ISO_N3) : null;
     let sov: string[]; let ter: string;
     const man = MANUAL[name];
     if (name in MANUAL) {
       if (man === null) continue;
       ({ sov, ter } = man);
     } else {
-      const row = f.id != null ? byUn.get(Number(f.id)) : undefined;
-      if (!row) { unmapped.push(`${f.id}:${name}`); continue; }
+      const row = un != null ? byUn.get(un) : undefined;
+      if (!row) { unmapped.push(`${un}:${name}`); continue; }
       sov = row.sov; ter = row.name;
     }
     for (const s of sov) if (!sovereigns.has(s)) { console.warn('land code not in sovereign table:', s, ter); sovereigns.set(s, ter); }
@@ -164,8 +182,8 @@ async function main() {
     type: 'FeatureCollection',
     meta: {
       generatedAt: new Date().toISOString(),
-      simplifyMeters: Object.fromEntries(SEA_LAYERS.map((l) => [l.tier, l.meters])),
-      land: 'Natural Earth 1:10m Admin-0 Countries (world-atlas)',
+      simplifyMeters: { land: LAND_SIMPLIFY_METERS, ...Object.fromEntries(SEA_LAYERS.map((l) => [l.tier, l.meters])) },
+      land: 'Natural Earth 1:10m Admin-0 Countries v5.1.2 (full resolution)',
       sea: 'Marine Regions (VLIZ) Maritime Boundaries v12: eez_12nm, eez_internal_waters, eez_archipelagic_waters',
       tiers: ['land', 'internal', 'archipelagic', '12nm'],
     },
