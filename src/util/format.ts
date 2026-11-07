@@ -1,7 +1,7 @@
 /** Escape Discord markdown + neutralise mentions in untrusted text (callsigns are user-controlled). */
 export function escapeDiscord(text: string): string {
   return text
-    .replace(/[\\*_~`|>[\]()#-]/g, '\\$&')
+    .replace(/[\\*_~`|>[\]]/g, '\\$&')
     .replace(/@/g, '@​')
     .replace(/[\u0000-\u001f\u007f]/g, '');
 }

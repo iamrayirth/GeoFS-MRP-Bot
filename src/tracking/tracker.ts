@@ -27,6 +27,8 @@ export interface TrackedAircraft {
   inactiveSince: Date | null;
   /** Last alert (mirrors the persistent cooldown record). */
   lastAlertAt: Date | null;
+  /** Set by the alert manager each cycle from the persisted ignore list (expiry already applied). */
+  ignored: boolean;
   /** Was the aircraft inside a monitored country at the previous cycle? Distinguishes ENTERED from REMAINS alerts. */
   wasInMonitored: boolean;
 }
@@ -77,7 +79,7 @@ export class AircraftTracker {
           aircraftTypeLabel: type.label, aircraftTypeKnown: type.known,
           lat: o.lat, lon: o.lon, altitudeM: o.altitudeM, speedKts: o.speedKts, headingDeg: o.headingDeg, serverTimeMs: o.serverTimeMs,
           geo: this.geo.resolve(o.lat, o.lon), matchedIdentifiers: [], firstSeenAt: now, lastSeenAt: now,
-          active: true, inactiveSince: null, lastAlertAt: null, wasInMonitored: false,
+          active: true, inactiveSince: null, lastAlertAt: null, ignored: false, wasInMonitored: false,
         };
         this.aircraft.set(o.id, t);
         newlyTracked++;

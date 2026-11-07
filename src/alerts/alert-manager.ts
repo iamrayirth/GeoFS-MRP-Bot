@@ -72,6 +72,7 @@ export class AlertManager {
       const toPersist: TrackingRecord[] = [];
 
       for (const a of active) {
+        a.ignored = ignores.has(a.id);
         if (a.matchedIdentifiers.length === 0) { a.wasInMonitored = false; continue; }
         stats.evaluated++;
         try {

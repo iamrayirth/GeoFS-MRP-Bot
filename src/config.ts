@@ -34,6 +34,7 @@ const schema = z.object({
   HEALTH_PORT: z.coerce.number().int().min(0).max(65535).default(8080),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   LOG_PRETTY: bool(false),
+  REGISTER_COMMANDS: bool(true),
 });
 
 export type Config = z.infer<typeof schema>;
