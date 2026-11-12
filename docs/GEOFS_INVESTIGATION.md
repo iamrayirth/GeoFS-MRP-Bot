@@ -74,7 +74,9 @@ A reconnect produces a **new id** (consistent with the spec's "new aircraft" rul
   source sits behind the `GeoFsSource` interface so another adapter can replace it.
 * Callsigns are user-chosen: anyone can type `[USAF]`. Identification is by substring, as specified, not authentication.
 * `/update` and any authenticated GeoFS API were deliberately **not** used.
-* **Osprey V2 (`https://api.gms-admin.net/api/v2`)**, offered as a candidate source, was **not usable**: the sandbox's
-  egress gateway answered HTTP 502 for that host after it was allow-listed (403 before), so no response was ever seen.
-  Its schema is unknown to this project and nothing depends on it. `GEOFS_API` (`https://mps.geo-fs.com/map`) is
-  supported as an environment variable and is the verified source.
+* **Osprey V2 (`https://api.gms-admin.net/api/v2`)** is used as **optional identity enrichment**, with the endpoints and fields taken from
+  the reference bot `cynkcrl-ux/GeoFS-MRP-Track-` (see README → *Osprey identity enrichment*). From the development sandbox the host was
+  allow-listed but the egress gateway could not connect to it (HTTP 502, re-tried on a later day with the same result), so **no live
+  response was ever observed**: the client is tested against mocked responses derived from the reference's contract. It is not a position
+  source (positions come from GeoFS `/map`), and nothing in the alert path depends on it. `GEOFS_API` (`https://mps.geo-fs.com/map`) and
+  `OSPREY_BASE` are both configurable.

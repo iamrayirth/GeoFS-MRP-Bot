@@ -1,13 +1,14 @@
 import type { AlertManager } from '../alerts/alert-manager.js';
 import type { RuntimeConfig } from '../config-service.js';
 import type { Config } from '../config.js';
-import type { Repos } from '../db/repositories.js';
+import type { Repos } from '../store/repositories.js';
 import type { AircraftNames } from '../geofs/aircraft-names.js';
 import type { CountryDirectory } from '../geo/countries.js';
 import type { GeoEngine } from '../geo/engine.js';
 import type { HealthService } from '../health.js';
 import type { Log } from '../logger.js';
 import type { Monitor } from '../monitor.js';
+import type { OspreyClient } from '../osprey/client.js';
 import type { AircraftTracker } from '../tracking/tracker.js';
 
 export interface BotContext {
@@ -21,6 +22,8 @@ export interface BotContext {
   directory: CountryDirectory;
   geo: GeoEngine;
   names: AircraftNames;
+  /** null when OSPREY_ENABLED=false */
+  osprey: OspreyClient | null;
   health: HealthService;
   startedAt: Date;
 }

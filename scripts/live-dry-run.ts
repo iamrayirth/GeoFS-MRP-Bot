@@ -1,9 +1,9 @@
 /**
- * End-to-end dry run on LIVE GeoFS data: real collector, tracker, geo engine, cooldown claims in PostgreSQL and the real
+ * End-to-end dry run on LIVE GeoFS data: real collector, tracker, geo engine, cooldown claims in the JSON state store and the real
  * embed builder - only the Discord delivery is replaced by console output. Nothing is simulated.
  *
- *   DATABASE_URL=postgres://... npm run dry-run -- "[" 3        # identifier(s) comma-separated, number of polls
- *   (monitors EVERY country so that any matching aircraft over land/territorial water triggers)
+ *   npm run dry-run -- "[" 3        # identifier(s) comma-separated, number of polls
+ *   (monitors EVERY country so that any matching aircraft over land/territorial water triggers; uses a throw-away state dir)
  */
 import 'dotenv/config';
 import pino from 'pino';
@@ -11,8 +11,11 @@ import { AlertManager } from '../src/alerts/alert-manager.js';
 import { buildAlertMessage } from '../src/alerts/embed.js';
 import type { Notifier } from '../src/alerts/types.js';
 import { RuntimeConfig } from '../src/config-service.js';
-import { createDb, waitForDb } from '../src/db/client.js';
-import { createRepos } from '../src/db/repositories.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { JsonStore } from '../src/store/json-store.js';
+import { createRepos } from '../src/store/repositories.js';
 import { AircraftNames } from '../src/geofs/aircraft-names.js';
 import { GeoFsMapClient } from '../src/geofs/client.js';
 import { AoBoxes, CountryDirectory } from '../src/geo/countries.js';
@@ -23,10 +26,9 @@ import { AircraftTracker } from '../src/tracking/tracker.js';
 const identifiers = (process.argv[2] ?? '[').split(',').map((s) => s.trim()).filter(Boolean);
 const polls = Number(process.argv[3] ?? 3);
 const log = pino({ level: 'warn' });
-const h = createDb(process.env.DATABASE_URL!, { ssl: false, log });
-await waitForDb(h, log); await h.migrate();
-await h.db.execute((await import('drizzle-orm')).sql`truncate aircraft_cooldowns, aircraft_tracking, ignored_aircraft, identifiers, monitored_countries, settings`);
-const repos = createRepos(h.db);
+const stateDir = await mkdtemp(join(tmpdir(), 'geofs-dry-run-'));
+const store = await JsonStore.open(stateDir, log, { lock: false });
+const repos = createRepos(store);
 const config = new RuntimeConfig(repos);
 const geo = GeoEngine.load();
 const dir = new CountryDirectory([...geo.sovereigns.values()], geo.territories);
@@ -56,5 +58,7 @@ for (let n = 1; n <= polls; n++) {
   console.log(`  -> alerts sent=${stats.alertsSent} skipped=${JSON.stringify(stats.skipped)}`);
   if (n < polls) await new Promise((r) => setTimeout(r, 10_000));
 }
-console.log('\ncooldown rows persisted:', (await h.db.execute((await import('drizzle-orm')).sql`select count(*)::int n from aircraft_cooldowns`) as any).rows[0].n);
-await h.close();
+await store.flush();
+console.log('\ncooldown rows persisted in state.json:', Object.keys(store.state.cooldowns).length);
+await store.close();
+await rm(stateDir, { recursive: true, force: true });

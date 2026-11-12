@@ -1,6 +1,7 @@
 import { EmbedBuilder } from 'discord.js';
 import type { Tier } from '../geo/types.js';
 import { escapeDiscord, flagEmoji, flightLevel, mapsLink, truncate } from '../util/format.js';
+import type { OspreyIdentity } from '../osprey/client.js';
 import type { AlertPayload } from './types.js';
 
 const AREA: Record<Tier, string> = {
@@ -22,8 +23,32 @@ export function countryLabel(c: { name: string; iso2: string | null }): string {
   return f ? `${f} ${c.name}` : c.name;
 }
 
+const unixOf = (d: Date) => Math.floor(d.getTime() / 1000);
+
+/** Human lines for an Osprey identity (shared by alerts and /ident). Only fields Osprey actually returned are shown. */
+export function ospreyLines(id: OspreyIdentity, liveCallsign?: string): string[] {
+  const lines: string[] = [];
+  if (id.accountId) lines.push(`Account ID: \`${id.accountId}\``);
+  const aliases = id.pastCallsigns.filter((p) => !liveCallsign || p.toLowerCase() !== liveCallsign.toLowerCase());
+  if (aliases.length) lines.push(`Known aliases: ${aliases.slice(0, 5).map((a) => `\`${escapeDiscord(truncate(a, 32)).replace(/`/g, "'")}\``).join(', ')}${aliases.length > 5 ? ` +${aliases.length - 5} more` : ''}`);
+  if (id.lastLoginAt) lines.push(`Last login: <t:${unixOf(id.lastLoginAt)}:R>`);
+  if (id.createdAt) lines.push(`Account created: <t:${unixOf(id.createdAt)}:D>`);
+  if (id.online !== null) lines.push(`Osprey online flag: ${id.online ? 'online' : 'offline'}`);
+  return lines;
+}
+
 export function utcStamp(d: Date): string {
   return `${d.toISOString().slice(0, 19).replace('T', ' ')} UTC`;
+}
+
+function ospreyField(p: AlertPayload): { name: string; value: string; inline: boolean }[] {
+  const o = p.osprey;
+  if (o.status === 'disabled') return [];
+  if (o.status === 'ok') {
+    const lines = ospreyLines(o.identity, p.callsign);
+    return lines.length ? [{ name: 'Osprey identity', value: truncate(lines.join('\n'), 1024), inline: false }] : [];
+  }
+  return [{ name: 'Osprey identity', value: o.status === 'not_found' ? 'No Osprey record found' : 'Lookup unavailable', inline: false }];
 }
 
 export function buildAlertMessage(p: AlertPayload): { content: string; embeds: EmbedBuilder[]; allowedMentions: { roles: string[]; parse: never[] } } {
@@ -45,9 +70,10 @@ export function buildAlertMessage(p: AlertPayload): { content: string; embeds: E
       { name: 'Altitude', value: formatAltitude(p.altitudeM), inline: true },
       { name: 'Heading', value: formatHeading(p.headingDeg), inline: true },
       { name: 'Matched identifier(s)', value: truncate(p.matchedIdentifiers.map(escapeDiscord).join(', ') || 'Unknown', 1024), inline: false },
+      ...ospreyField(p),
       { name: 'Detected', value: `${utcStamp(p.detectedAt)} (<t:${Math.floor(p.detectedAt.getTime() / 1000)}:R>)`, inline: false },
     )
-    .setFooter({ text: 'Source: GeoFS multiplayer map · Speed is indicated airspeed · FL from geometric altitude' })
+    .setFooter({ text: `Source: GeoFS multiplayer map${p.osprey.status === 'ok' ? ' + Osprey V2' : ''} · Speed is indicated airspeed · FL from geometric altitude` })
     .setTimestamp(p.detectedAt);
 
   return {

@@ -1,4 +1,12 @@
 import type { CountryRef, Tier } from '../geo/types.js';
+import type { OspreyIdentity } from '../osprey/client.js';
+
+/** Optional Osprey enrichment attached to an alert. Alerts never depend on it. */
+export type OspreyAlertInfo =
+  | { status: 'ok'; identity: OspreyIdentity }
+  | { status: 'not_found' }
+  | { status: 'unavailable' }
+  | { status: 'disabled' };
 
 export interface AlertPayload {
   /** entered = was not inside monitored territory at the previous observation; remains = still inside (repeat alert). */
@@ -20,6 +28,7 @@ export interface AlertPayload {
   tier: Tier;
   snapped: boolean;
   detectedAt: Date;
+  osprey: OspreyAlertInfo;
   channelId: string;
   roleId: string;
 }

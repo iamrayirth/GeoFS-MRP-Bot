@@ -2,8 +2,9 @@ import { Client, Events, GatewayIntentBits } from 'discord.js';
 import { AlertManager } from './alerts/alert-manager.js';
 import { ALERT_COOLDOWN_MS, loadConfig } from './config.js';
 import { RuntimeConfig } from './config-service.js';
-import { createDb, waitForDb } from './db/client.js';
-import { createRepos } from './db/repositories.js';
+import { createRepos } from './store/repositories.js';
+import { JsonStore } from './store/json-store.js';
+import { OspreyClient } from './osprey/client.js';
 import { attachInteractionHandler } from './discord/interactions.js';
 import { DiscordNotifier } from './discord/notifier.js';
 import { registerCommands } from './discord/register.js';
@@ -25,16 +26,14 @@ async function main() {
   const startedAt = new Date();
   log.info({ node: process.version, pollMs: cfg.POLL_INTERVAL_MS, guild: cfg.DISCORD_GUILD_ID ?? null, cooldownMs: ALERT_COOLDOWN_MS }, 'starting GeoFS MRP bot');
 
-  // ---- database -------------------------------------------------------------------------------------------------
-  const dbh = createDb(cfg.DATABASE_URL, { ssl: cfg.DATABASE_SSL, log });
-  await waitForDb(dbh, log);
-  if (cfg.AUTO_MIGRATE) { await dbh.migrate(); log.info('database migrations applied'); }
-  const repos = createRepos(dbh.db);
+  // ---- persistent state (JSON) ------------------------------------------------------------------------------------
+  const store = await JsonStore.open(cfg.STATE_DIR, log);
+  const repos = createRepos(store);
   const runtime = new RuntimeConfig(repos);
   await runtime.load();
   // After a restart nothing is known to be online yet.
   await repos.tracking.markAllInactive();
-  log.info({ identifiers: runtime.identifiers.length, countries: runtime.countries.length, channel: runtime.channelId, role: runtime.roleId }, 'configuration restored');
+  log.info({ stateDir: cfg.STATE_DIR, identifiers: runtime.identifiers.length, countries: runtime.countries.length, channel: runtime.channelId, role: runtime.roleId }, 'state restored');
 
   // ---- geography & aircraft names --------------------------------------------------------------------------------
   const t0 = Date.now();
@@ -61,14 +60,16 @@ async function main() {
 
   // ---- pipeline -------------------------------------------------------------------------------------------------
   const notifier = new DiscordNotifier(client, log, { guildId: cfg.DISCORD_GUILD_ID });
-  const alerts = new AlertManager({ repos, config: runtime, notifier, aoBoxes, log });
+  const osprey = cfg.OSPREY_ENABLED ? new OspreyClient(log, { base: cfg.OSPREY_BASE }) : null;
+  log.info({ osprey: osprey ? cfg.OSPREY_BASE : 'disabled' }, 'osprey enrichment');
+  const alerts = new AlertManager({ repos, config: runtime, notifier, aoBoxes, log, identity: osprey });
   log.info({ activeCooldowns: await alerts.warm() }, 'cooldown state restored');
   const tracker = new AircraftTracker(geo, names, { staleAfterMs: cfg.STALE_AFTER_MS });
   const source = new GeoFsMapClient(cfg.GEOFS_API, cfg.HTTP_TIMEOUT_MS);
   const monitor = new Monitor(source, tracker, alerts, runtime, log, cfg.POLL_INTERVAL_MS);
-  const health = new HealthService({ client, db: dbh, poller: monitor.poller, cfg, geoPolygons: geo.polygonCount });
+  const health = new HealthService({ client, store, osprey, poller: monitor.poller, cfg, geoPolygons: geo.polygonCount });
 
-  attachInteractionHandler(client, { cfg, log, repos, runtime, tracker, monitor, alerts, directory, geo, names, health, startedAt });
+  attachInteractionHandler(client, { cfg, log, repos, runtime, tracker, monitor, alerts, directory, geo, names, osprey, health, startedAt });
   const server = health.listen(cfg.HEALTH_PORT, log);
   monitor.start();
   log.info('monitoring started');
@@ -100,7 +101,7 @@ async function main() {
     await monitor.stop().catch(() => undefined);
     server?.close();
     await client.destroy();
-    await dbh.close().catch(() => undefined);
+    await store.close();  // flushes pending state and releases the instance lock
     log.info('bye');
     process.exit(0);
   };

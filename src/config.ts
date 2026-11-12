@@ -22,12 +22,14 @@ const schema = z.object({
   DISCORD_TOKEN: z.string().min(20, 'DISCORD_TOKEN is required'),
   DISCORD_CLIENT_ID: z.preprocess(blankToUndef, z.string().regex(/^\d{15,25}$/).optional()),
   DISCORD_GUILD_ID: z.preprocess(blankToUndef, z.string().regex(/^\d{15,25}$/).optional()),
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-  DATABASE_SSL: bool(false),
-  AUTO_MIGRATE: bool(true),
+  /** Directory holding state.json (identifiers, countries, settings, cooldowns, ignores). Mount it as a volume. */
+  STATE_DIR: z.string().min(1).default('./state'),
   AUTHORIZED_USER_IDS: snowflakeList,
   ADMIN_ROLE_IDS: snowflakeList,
   GEOFS_API: z.string().url().default('https://mps.geo-fs.com/map'),
+  /** Osprey V2 identity API (account id, past callsigns, last login). Optional enrichment; alerts never depend on it. */
+  OSPREY_BASE: z.string().url().default('https://api.gms-admin.net/api/v2'),
+  OSPREY_ENABLED: bool(true),
   GEOFS_AIRCRAFT_LIST_URL: z.string().url().default('https://www.geo-fs.com/geofs.php'),
   POLL_INTERVAL_MS: z.coerce.number().int().min(5000).max(300_000).default(10_000),
   STALE_AFTER_MS: z.coerce.number().int().min(10_000).default(120_000),

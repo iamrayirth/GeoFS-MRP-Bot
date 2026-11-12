@@ -1,12 +1,13 @@
 import { ALERT_COOLDOWN_MS } from '../config.js';
 import type { RuntimeConfig } from '../config-service.js';
-import type { Repos, TrackingRecord } from '../db/repositories.js';
+import type { Repos, TrackingRecord } from '../store/repositories.js';
 import type { AoBoxes } from '../geo/countries.js';
 import type { CountryRef } from '../geo/types.js';
 import type { Log } from '../logger.js';
 import type { TrackedAircraft } from '../tracking/tracker.js';
 import { evaluateAlert, type SkipReason } from './decision.js';
-import { PermanentNotifyError, type AlertPayload, type Notifier } from './types.js';
+import type { OspreyLookup } from '../osprey/client.js';
+import { PermanentNotifyError, type AlertPayload, type Notifier, type OspreyAlertInfo } from './types.js';
 
 export interface CycleStats {
   evaluated: number;
@@ -25,6 +26,9 @@ export interface AlertManagerDeps {
   cooldownMs?: number;
   /** Retry holdoff for an aircraft after its alert could not be delivered. */
   sendBackoffMs?: number;
+  /** Optional Osprey identity enrichment. A failure or timeout only means the alert goes out without it. */
+  identity?: { lookup(q: { accountId?: number | null; callsign?: string | null }): Promise<OspreyLookup> } | null;
+  identityTimeoutMs?: number;
 }
 
 export class AlertManager {
@@ -115,6 +119,8 @@ export class AlertManager {
   private async fire(a: TrackedAircraft, m: { country: CountryRef; others: CountryRef[] }, now: Date): Promise<boolean> {
     const channelId = this.d.config.channelId!;
     const roleId = this.d.config.roleId!;
+    // Enrich BEFORE claiming so a slow Osprey can never leave a claimed-but-unsent alert behind.
+    const osprey = await this.identify(a);
     // Atomic claim BEFORE sending: only one claimant can win, across cycles, restarts and processes.
     const claim = await this.d.repos.cooldowns.tryClaim(a.id, a.callsign, m.country.iso3, now, this.cooldownMs);
     if (!claim.claimed) {
@@ -129,7 +135,7 @@ export class AlertManager {
       aircraftId: a.id, callsign: a.callsign, matchedIdentifiers: [...a.matchedIdentifiers],
       aircraftTypeLabel: a.aircraftTypeLabel, lat: a.lat, lon: a.lon, altitudeM: a.altitudeM, speedKts: a.speedKts, headingDeg: a.headingDeg,
       country: m.country, otherClaimants: m.others, territory: a.geo.territory, tier: a.geo.tier!, snapped: a.geo.snapped,
-      detectedAt: now, channelId, roleId,
+      detectedAt: now, osprey, channelId, roleId,
     };
     try {
       await this.d.notifier.send(payload);
@@ -148,6 +154,21 @@ export class AlertManager {
       'alert sent',
     );
     return true;
+  }
+
+  /** Osprey lookup bounded by a short timeout; any problem degrades to "no enrichment", never to a lost alert. */
+  private async identify(a: TrackedAircraft): Promise<OspreyAlertInfo> {
+    const id = this.d.identity;
+    if (!id) return { status: 'disabled' };
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const timeout = new Promise<OspreyLookup>((res) => { timer = setTimeout(() => res({ status: 'unavailable', error: 'timeout' }), this.d.identityTimeoutMs ?? 2000); });
+      const r = await Promise.race([id.lookup({ accountId: a.accountId, callsign: a.callsign }), timeout]);
+      return r.status === 'ok' ? { status: 'ok', identity: r.identity } : { status: r.status === 'not_found' ? 'not_found' : 'unavailable' };
+    } catch (err) {
+      this.d.log.warn({ err: (err as Error).message, aircraftId: a.id }, 'osprey enrichment failed; sending alert without it');
+      return { status: 'unavailable' };
+    } finally { clearTimeout(timer); }
   }
 
   /** Sanity check against the user-supplied coarse boxes. Logs only; never changes or suppresses the polygon result. */

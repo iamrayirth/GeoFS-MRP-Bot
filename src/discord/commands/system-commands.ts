@@ -40,9 +40,10 @@ export const healthCommand: Command = {
     const g = r.checks.geofs;
     await reply(i, [
       `${icon} **${r.status.toUpperCase()}**`,
-      `${ok(r.checks.database.ok)} Database`,
+      `${ok(r.checks.storage.ok)} Storage (state.json)${r.checks.storage.lastWriteError ? ` — ${r.checks.storage.lastWriteError.slice(0, 80)}` : ''}`,
       `${ok(r.checks.discord.ok)} Discord gateway${r.checks.discord.wsPingMs !== null ? ` (${r.checks.discord.wsPingMs} ms)` : ''}`,
       `${ok(g.ok)} GeoFS data — last success ${g.ageSeconds === null ? 'never' : `${g.ageSeconds}s ago`}, ${g.consecutiveFailures} consecutive failures${g.lastError ? ` (${g.lastError.slice(0, 100)})` : ''}`,
+      r.checks.osprey.enabled ? `${r.checks.osprey.ok === false ? '⚠️' : r.checks.osprey.ok ? '✅' : '➖'} Osprey V2 (optional) — ${r.checks.osprey.ok === null ? 'no lookups yet' : r.checks.osprey.ok ? 'ok' : `failing (${r.checks.osprey.consecutiveFailures}×${r.checks.osprey.lastError ? `: ${r.checks.osprey.lastError.slice(0, 80)}` : ''})`}` : '➖ Osprey V2 disabled',
       `${ok(r.checks.geodata.ok)} Geodata — ${r.checks.geodata.polygons.toLocaleString('en-US')} polygons`,
       `Memory ${r.memoryMb} MB · uptime ${formatDuration(r.uptimeSeconds * 1000)}`,
     ].join('\n'));
@@ -58,7 +59,7 @@ export const helpCommand: Command = {
       .setDescription('Alerts fire when an aircraft whose callsign contains a configured identifier is inside a monitored country (land or 12 NM territorial waters). One global **10-minute** cooldown per aircraft.')
       .addFields(
         { name: '🔧 Admin (Administrator permission, or authorised user/role)', value: ['`/identifier add|remove`', '`/country add|remove`', '`/settings channel|role`', '`/ignore callsign duration`', '`/unignore callsign`'].join('\n') },
-        { name: '👁 Everyone', value: ['`/identifier list` · `/country list`', '`/aircraft list` · `/aircraft info`', '`/ignored` · `/settings view`', '`/status` · `/health` · `/help`'].join('\n') },
+        { name: '👁 Everyone', value: ['`/identifier list` · `/country list`', '`/aircraft list` · `/aircraft info`', '`/ident` · `/roster` (Osprey identity)', '`/ignored` · `/settings view`', '`/ident` · `/roster` (Osprey)', '`/status` · `/health` · `/help`'].join('\n') },
         { name: 'Notes', value: `• Aircraft are identified by GeoFS **multiplayer ID**; a reconnect gets a new ID and is a new aircraft.\n• Durations: \`10m\`, \`30m\`, \`1h\`, \`6h\`, \`1d\`, \`1h30m\` (1 minute – 30 days).\n• Matching is a case-insensitive substring: \`Charlie[USAF]\`, \`delta[usaf]\`, \`[RAF]Charlie\`.\n• Currently tracking ${ctx.tracker.activeCount} online aircraft.` },
       );
     await reply(i, { embeds: [embed] });

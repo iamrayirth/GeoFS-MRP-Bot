@@ -11,7 +11,7 @@ import type { Command } from './types.js';
 const AREA: Record<string, string> = { land: 'land', internal: 'internal waters', archipelagic: 'archipelagic waters', '12nm': 'territorial waters' };
 const unix = (d: Date) => Math.floor(d.getTime() / 1000);
 
-function where(a: TrackedAircraft): string {
+export function where(a: TrackedAircraft): string {
   if (a.geo.status === 'unresolved') return 'Unknown (not in any country’s land or territorial waters)';
   const names = a.geo.countries.map(countryLabel).join(' / ');
   const ter = a.geo.territory && a.geo.countries.length === 1 && a.geo.territory !== a.geo.countries[0]!.name ? ` (${escapeDiscord(a.geo.territory)})` : '';
@@ -31,10 +31,10 @@ export function resolveAircraft(ctx: BotContext, query: string, activeOnly: bool
   return { kind: 'none' };
 }
 
-const manyMsg = (list: TrackedAircraft[]) =>
+export const manyMsg = (list: TrackedAircraft[]) =>
   `❓ ${list.length} aircraft share that callsign (callsigns are not unique in GeoFS). Pick one from the autocomplete list, or use its multiplayer ID:\n${list.slice(0, 10).map((a) => `• \`${a.id}\` — ${escapeDiscord(a.callsign)} — ${where(a)}`).join('\n')}`;
 
-function aircraftChoices(ctx: BotContext, q: string) {
+export function aircraftChoices(ctx: BotContext, q: string) {
   const list = ctx.tracker.search(q, { activeOnly: true, limit: 500 });
   list.sort((a, b) => b.matchedIdentifiers.length - a.matchedIdentifiers.length || a.callsign.localeCompare(b.callsign));
   return list.slice(0, 25).map((a) => ({

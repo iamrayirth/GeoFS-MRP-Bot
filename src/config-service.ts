@@ -1,5 +1,5 @@
-import type { Repos } from './db/repositories.js';
-import { SETTING_CHANNEL, SETTING_ROLE } from './db/repositories.js';
+import type { Repos } from './store/repositories.js';
+import { SETTING_CHANNEL, SETTING_ROLE } from './store/repositories.js';
 import type { IdentifierEntry } from './tracking/identifiers.js';
 
 export interface MonitoredCountry { iso3: string; name: string; }

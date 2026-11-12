@@ -5,9 +5,10 @@ callsign contains a configured identifier (e.g. `[USAF]`) is inside a configured
 waters** — with one global, fixed 10-minute per-aircraft cooldown.
 
 * Data: GeoFS's own read-only player-list endpoint (`POST https://mps.geo-fs.com/map`) — [findings](docs/GEOFS_INVESTIGATION.md)
+* Identity: optional Osprey V2 enrichment (endpoints from the reference bot) — [below](#osprey-identity-enrichment)
 * Geography: Natural Earth land + Marine Regions (VLIZ) 12 NM territorial seas — [details & measured accuracy](docs/GEODATA.md)
 * Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-* Stack: Node 22 · TypeScript · discord.js 14 · PostgreSQL + Drizzle · Turf · Zod · Pino · Vitest · Docker
+* Stack: Node 22 · TypeScript · discord.js 14 · JSON file store · Turf · Zod · Pino · Vitest · Docker
 
 ## What is verified, and what is not
 
@@ -19,10 +20,10 @@ waters** — with one global, fixed 10-minute per-aircraft cooldown.
 | Aircraft names | Table scraped from the live GeoFS page (190 types); unmapped ids shown as *Unknown (aircraft ID n)* |
 | Country + territorial-water detection | Real dataset; 12 NM width measured (median 12.03 NM); known cities, the antimeridian, disputes, EEZ-is-not-territorial-sea, holes, borders all tested |
 | Cooldown / ignore / identifiers | Unit + integration tests incl. the exact 12:00/12:03/12:08/12:10/12:20 timeline, restarts, reconnect-with-new-id, failed delivery rollback |
-| PostgreSQL | Migrations on **real PostgreSQL 16**; 50 truly concurrent claims ⇒ exactly one wins |
-| End to end on **live** data | `npm run dry-run`: real feed → tracker → geo → cooldown claims in Postgres → real embed builder. 11 alerts on poll 1, 0 on polls 2–3 (cooldown), unresolved ocean aircraft skipped |
+| JSON state store | Atomic cooldown claims (50 concurrent ⇒ exactly one wins), crash-safe writes, **refuses to start rather than silently reset** on a corrupt `state.json`, backup recovery, single-instance lock (incl. a real child-process crash test) |
+| End to end on **live** data | `npm run dry-run`: real feed → tracker → geo → cooldown claims in `state.json` → real embed builder. alerts on poll 1, none on polls 2–3 (cooldown), unresolved ocean aircraft skipped |
 | Build/runtime | `tsc` build; runtime stage simulated with production-only dependencies |
-| Test suite | 180+ tests (`npm test`) |
+| Test suite | 240+ tests (`npm test`, ~5 s, no external services) |
 
 **NOT verified — could not be tested from the development sandbox**
 
@@ -33,7 +34,7 @@ waters** — with one global, fixed 10-minute per-aircraft cooldown.
 * **Docker image build / `docker compose up`** (no Docker daemon in the sandbox). `docker compose config` validates; the
   Dockerfile follows the standard multi-stage pattern but has not been built.
 * Behaviour under GeoFS rate limiting (none documented/observed) and over multi-day uptime.
-* The suggested "Osprey V2" source was unreachable (502) and is unused — see the investigation doc.
+* **Osprey V2 against the live API.** `https://api.gms-admin.net/api/v2` was unreachable from the sandbox (the egress gateway could not connect), so the integration is implemented from the endpoints/fields used by the reference bot `cynkcrl-ux/GeoFS-MRP-Track-` and tested **only against mocked responses**. Whether Osprey's `accountID` equals the GeoFS `acid` is an assumption (callsign lookup is the fallback). It is optional and can never block an alert.
 
 ## Quick start (Docker Compose — recommended)
 
@@ -49,11 +50,11 @@ waters** — with one global, fixed 10-minute per-aircraft cooldown.
 ```bash
 git clone <this repo> && cd GeoFS-MRP-Bot
 cp .env.example .env
-# edit .env: DISCORD_TOKEN, DISCORD_CLIENT_ID, DISCORD_GUILD_ID, POSTGRES_PASSWORD (long random)
+# edit .env: DISCORD_TOKEN, DISCORD_CLIENT_ID, DISCORD_GUILD_ID
 docker compose up -d --build
 docker compose logs -f bot
 ```
-Migrations run automatically on start and slash commands are registered automatically (guild-scoped ⇒ instant).
+State is kept in `state.json` on the `botstate` Docker volume (survives restarts and rebuilds). Slash commands are registered automatically on start (guild-scoped ⇒ instant).
 
 ### 3. First-run check (do this once — it is the part that could not be tested here)
 In Discord, as an Administrator:
@@ -76,12 +77,12 @@ one alert with a role ping, then silence for 10 minutes, then a repeat alert whi
 | `DISCORD_TOKEN` | — | **required**, secret |
 | `DISCORD_CLIENT_ID` | derived from token | needed by `npm run deploy-commands` |
 | `DISCORD_GUILD_ID` | — | restricts the bot to one server (recommended) |
-| `DATABASE_URL` | — | **required**; set automatically by compose |
-| `DATABASE_SSL` | `false` | `true` for TLS-only managed Postgres |
-| `AUTO_MIGRATE` | `true` | apply SQL migrations at start |
+| `STATE_DIR` | `./state` | directory for `state.json` (`/app/state` in Docker, on a volume) |
 | `REGISTER_COMMANDS` | `true` | register slash commands at start |
 | `AUTHORIZED_USER_IDS`, `ADMIN_ROLE_IDS` | — | extra users/roles allowed to run admin commands (Administrators always are) |
 | `GEOFS_API` | `https://mps.geo-fs.com/map` | data source |
+| `OSPREY_BASE` | `https://api.gms-admin.net/api/v2` | Osprey V2 identity API |
+| `OSPREY_ENABLED` | `true` | `false` disables Osprey (alerts, `/ident`, `/roster` degrade gracefully) |
 | `GEOFS_AIRCRAFT_LIST_URL` | `https://www.geo-fs.com/geofs.php` | aircraft id → name table |
 | `POLL_INTERVAL_MS` | `10000` | min 5000 (GeoFS's own client uses 10 s) |
 | `STALE_AFTER_MS` | `120000` | ignore server records older than this |
@@ -103,6 +104,8 @@ All replies are ephemeral. Commands work only in servers (and only in `DISCORD_G
 | `/ignore callsign: duration:` | admin | by **multiplayer id** (autocomplete picks the exact aircraft); `10m 30m 1h 6h 1d 1h30m…`, 1 min – 30 days |
 | `/unignore callsign:` · `/ignored` | admin · all | `/ignored` shows callsign, id and expiry |
 | `/settings view` · `channel channel:` · `role role:` | all · admin · admin | alerts need both set; channel permissions are checked |
+| `/ident pilot:` | all | identity card: live GeoFS data + Osprey (account ID, aliases, last login, account created) |
+| `/roster` | all | Osprey accounts whose callsign matches a configured identifier, flagged if visible in GeoFS now |
 | `/status` · `/health` · `/help` | all | |
 
 > Discord does not allow a slash command to be both runnable and have sub-commands, so the requested bare `/settings`
@@ -113,13 +116,36 @@ All replies are ephemeral. Commands work only in servers (and only in `DISCORD_G
 * Posts only to the configured channel, with `<@&role>` on **every** alert (repeats included); nothing else can be mentioned.
 * Embed: callsign, multiplayer id, country (flag; territory in brackets; disputed claimants), area (land / territorial waters …),
   aircraft name, clickable Google Maps position, speed in **KTS** (indicated airspeed), altitude as **FL** (+ feet), heading in **°**,
-  matched identifiers, UTC detection time. Missing/implausible values are **Unknown**.
+  matched identifiers, UTC detection time, and — when Osprey answers — an **Osprey identity** block (account ID, known aliases, last login). Missing/implausible values are **Unknown**.
 * Title is *ENTERED* when the aircraft was not in monitored territory on the previous observation, otherwise *REMAINS IN*.
 * **Cooldown (global, fixed 10 min per multiplayer id, shared by all countries, persisted):**
   `12:00 India ALERT · 12:03 Pakistan – · 12:08 Nepal – · 12:10 still Nepal ALERT · 12:20 ALERT`. After expiry an aircraft outside
   monitored countries is silent and alerts immediately on entering one.
 * A reconnect with a **new multiplayer id is a new aircraft** (new cooldown, not ignored).
 * Aircraft that vanish are marked inactive and not processed; their cooldown/ignore rows are kept.
+
+## Osprey identity enrichment
+
+Optional. Uses the **same Osprey V2 endpoints as the reference bot** `cynkcrl-ux/GeoFS-MRP-Track-` (base `OSPREY_BASE`,
+default `https://api.gms-admin.net/api/v2`):
+
+| Endpoint | Used for |
+|---|---|
+| `GET /users/?acid=<account id>` | alert enrichment and `/ident` (the GeoFS `acid` from the live feed) |
+| `GET /users/search?exact_callsign=<callsign>` | fallback when the account id is unknown to Osprey, and `/ident` for offline pilots |
+| `GET /users/search?pattern=/<regex>/i&page=N&per_page=100` | `/roster` (regex built from your configured identifiers, escaped) |
+
+Fields read (as in the reference): `accountID`, `currentCallsign`, `Online`, `pastCallsigns[]`, `events[].event.{type,timestamp}`
+(`login`, `account_created`). Nothing else is assumed or invented; absent fields are simply not shown.
+
+Behaviour: lookups are **cached** (10 min; 2 min for "not found"), concurrent identical lookups are merged, HTTP 429 honours
+`Retry-After` (default 8 s, as the reference) and retries **once** (the reference loops forever), and after 3 consecutive failures
+Osprey is left alone for 60 s. Alerts look Osprey up **before** claiming the cooldown, with a 2 s cap — if Osprey is slow, down or
+wrong, the alert is sent without the block (`Lookup unavailable`). `/health` reports Osprey as informational only.
+
+Differences from the reference: it queries `?acid=` with the GeoFS *multiplayer id* (a different number); this bot sends the GeoFS
+`acid` (account id). It also stores Osprey-only "online" pilots without positions; this bot does not (no position ⇒ no territory ⇒ no alert).
+**Unverified:** the live API could not be reached from the development sandbox (see "What is verified").
 
 ## Operations
 
@@ -128,28 +154,27 @@ All replies are ephemeral. Commands work only in servers (and only in `DISCORD_G
 * **Health:** `GET :8080/healthz` → 200 `ok|degraded`, **503** `unhealthy` (DB or Discord down). GeoFS outages are *degraded*
   (restarting would not help). Docker `HEALTHCHECK` uses it; `/health` shows the same in Discord.
 * **Restart strategy:** `restart: unless-stopped`; fatal errors exit non-zero so the supervisor restarts; SIGTERM shuts down cleanly.
-  State (config, cooldowns, ignores) is restored from PostgreSQL, so restarts never cause duplicate alerts.
+  State (config, cooldowns, ignores) is restored from `state.json`, so restarts never cause duplicate alerts.
   Use plain Docker/systemd instead? Run `node dist/index.js` under any supervisor with `Restart=always`.
-* **Backups:** `docker compose exec postgres pg_dump -U geofs geofs > backup.sql`.
-* **Update:** `git pull && docker compose up -d --build` (migrations apply automatically).
+* **Backups:** `docker compose cp bot:/app/state/state.json ./state-backup.json` (plain JSON; the bot also keeps `state.json.bak`, the previous good copy). Restore by stopping the bot and putting the file back.
+* **Update:** `git pull && docker compose up -d --build` .
 * **Refresh data:** `npm run build:geodata` (boundaries), `npm run update:aircraft` (aircraft table; also refreshed live every 6 h).
-* **Scale:** one replica. A second process would not double-alert (atomic DB claim) but would duplicate polling.
-* **Without Docker:** Node ≥ 22, PostgreSQL ≥ 14: `npm ci && npm run build && npm run db:migrate && npm start`.
+* **Scale:** exactly **one** instance per `STATE_DIR` — a lock file (`state.lock`, heartbeat) refuses a second one. A JSON file cannot arbitrate between writers or hosts; if you ever need several replicas, that is the point to move to a database.
+* **Without Docker:** Node ≥ 22: `npm ci && npm run build && STATE_DIR=./state npm start` (under systemd/pm2 with `Restart=always`).
+* **Corrupt state file:** the bot restores `state.json.bak` automatically; if neither file is usable it **refuses to start** (and leaves the files untouched) instead of silently forgetting cooldowns — repair the JSON or delete both files to start fresh.
 
 ## Development
 
 ```bash
 npm ci
 npm run typecheck
-npm test            # ~50 s; uses PGlite (Postgres in WASM) — no server needed
-TEST_DATABASE_URL=postgres://user@127.0.0.1:5432/scratch npm test   # also runs the real-PostgreSQL concurrency tests (drops schema `public`!)
+npm test            # ~5 s; no database or network needed (uses temporary state directories)
 npm run probe:geofs         # inspect the live GeoFS feed through the production parser
-npm run dry-run -- "[" 3    # live end-to-end run, Discord replaced by console (needs DATABASE_URL; truncates its tables)
-npm run db:generate         # after editing src/db/schema.ts
+npm run dry-run -- "[" 3    # live end-to-end run, Discord replaced by console (throw-away state dir)
 ```
 Behind an HTTP proxy, Node's `fetch` needs `NODE_USE_ENV_PROXY=1`.
 
-Project layout: `src/{geofs,tracking,geo,alerts,db,discord}`, `data/` (bundled datasets), `drizzle/` (migrations),
+Project layout: `src/{geofs,osprey,tracking,geo,alerts,store,discord}`, `data/` (bundled datasets),
 `tests/{unit,integration}`, `scripts/`, `docs/`.
 
 ## Limitations and assumptions
@@ -158,6 +183,7 @@ Project layout: `src/{geofs,tracking,geo,alerts,db,discord}`, `data/` (bundled d
 * Territorial waters are the VLIZ v12 12 NM polygons (baseline-based), simplified to 200 m; ~1 % of coastal aircraft (reclaimed land, some bays) can be *Unknown*. Not a legal determination. Details: [docs/GEODATA.md](docs/GEODATA.md).
 * Monitoring is per sovereign state; disputed areas alert if **any** claimant is monitored and name the others.
 * FL uses geometric altitude (no pressure correction); speed is indicated airspeed (GeoFS does not expose ground speed in `/map`).
+* State is a single JSON file written whole on each change (fine for this data size: tens of KB to ~1 MB); one instance only (see Operations).
 * Autocomplete shows at most 25 aircraft; `/aircraft list` shows 20 rows.
 * Node 22 is what was tested (Node 24 should work; not run).
 * Data attributions: Natural Earth (public domain); Flanders Marine Institute (VLIZ) Maritime Boundaries v12 (CC-BY 4.0).

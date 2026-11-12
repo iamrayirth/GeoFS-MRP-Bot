@@ -1,36 +1,19 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: geofs
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-      POSTGRES_DB: geofs
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U geofs -d geofs"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-    # Not published to the host: only the bot (same compose network) can reach it.
-
   bot:
     build: .
     restart: unless-stopped          # automatic restart after crashes and host reboots
-    depends_on:
-      postgres:
-        condition: service_healthy
     env_file: .env
     environment:
-      DATABASE_URL: postgres://geofs:${POSTGRES_PASSWORD}@postgres:5432/geofs
-      DATABASE_SSL: "false"
+      STATE_DIR: /app/state          # state.json lives on the named volume below
+    volumes:
+      - botstate:/app/state
     # Uncomment to reach the health endpoint from the host (e.g. for an external uptime monitor):
     # ports: ["127.0.0.1:8080:8080"]
-    stop_grace_period: 20s
+    stop_grace_period: 20s           # lets the bot flush state.json on SIGTERM
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "5" }
 
+# Run exactly ONE replica: state.json has a single-instance lock and is not shared between hosts.
 volumes:
-  pgdata:
+  botstate:

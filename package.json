@@ -13,14 +13,11 @@
     "dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "node dist/db/migrate-cli.js",
     "deploy-commands": "node dist/discord/deploy-commands.js",
     "build:geodata": "tsx scripts/build-geodata.ts",
     "update:aircraft": "tsx scripts/update-aircraft-types.ts",
     "dry-run": "tsx scripts/live-dry-run.ts",
     "probe:geofs": "tsx scripts/probe-geofs.ts",
-    "db:migrate:dev": "tsx src/db/migrate-cli.ts",
     "deploy-commands:dev": "tsx src/discord/deploy-commands.ts"
   },
   "dependencies": {
@@ -29,18 +26,13 @@
     "@turf/helpers": "^7.4.0",
     "discord.js": "^14.28.1",
     "dotenv": "^18.0.9",
-    "drizzle-orm": "^0.45.4",
     "i18n-iso-countries": "^7.14.0",
-    "pg": "^8.23.1",
     "pino": "^10.4.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.15",
     "@types/geojson": "^7946.0.16",
     "@types/node": "^26.6.6",
-    "@types/pg": "^8.23.1",
-    "drizzle-kit": "^0.31.11",
     "mapshaper": "^0.7.101",
     "pino-pretty": "^13.2.0",
     "tsx": "^4.23.15",

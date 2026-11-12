@@ -56,7 +56,7 @@ describe('persistence across restarts', () => {
     expect((await h.tick([A()], t('12:10'))).sent).toBe(1);
   });
 
-  it('even a cold restart (no cache warm-up) cannot duplicate: the database claim refuses', async () => {
+  it('even a cold restart (no cache warm-up) cannot duplicate: the persisted claim refuses', async () => {
     await h.tick([A()], t('12:00'));
     await h.restart({ warm: false });
     expect((await h.tick([A()], t('12:04'))).sent).toBe(0);
@@ -70,7 +70,7 @@ describe('persistence across restarts', () => {
     expect((await h.tick([A()], t('12:05'))).sent).toBe(0); // same id returns inside the window
   });
 
-  it('two processes racing on one aircraft produce exactly one alert', async () => {
+  it('two managers racing on one aircraft (shared state) produce exactly one alert', async () => {
     const { AlertManager } = await import('../../src/alerts/alert-manager.js');
     const { AircraftTracker } = await import('../../src/tracking/tracker.js');
     const { geo, log, snapshot } = await import('../helpers/harness.js');
@@ -79,7 +79,7 @@ describe('persistence across restarts', () => {
       tracker: new AircraftTracker(geo(), h.names, { staleAfterMs: 120_000 }),
       manager: new AlertManager({ repos: h.repos, config: h.config, notifier: h.notifier, log, now: () => at }),
     });
-    const p1 = mk(); const p2 = mk(); // two independent "processes" sharing only the database
+    const p1 = mk(); const p2 = mk(); // two managers sharing one store
     const r1 = p1.tracker.ingest(snapshot([A()], at), h.config.identifiers, at);
     const r2 = p2.tracker.ingest(snapshot([A()], at), h.config.identifiers, at);
     await Promise.all([p1.manager.processCycle(r1.active), p2.manager.processCycle(r2.active)]);
@@ -225,7 +225,7 @@ describe('failure handling', () => {
   });
 });
 
-describe('database outage', () => {
+describe('storage failure during a cycle', () => {
   it('a failed cycle sends nothing, does not wedge the manager, and the next cycle recovers', async () => {
     h = await createHarness();
     const real = h.repos.ignores.listActive.bind(h.repos.ignores);

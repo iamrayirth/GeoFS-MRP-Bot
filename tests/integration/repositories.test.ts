@@ -1,17 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createRepos, type Repos } from '../../src/db/repositories.js';
+import { createRepos, type Repos } from '../../src/store/repositories.js';
 import { ALERT_COOLDOWN_MS } from '../../src/config.js';
-import { createTestDb } from '../helpers/db.js';
+import { createTestStore, type TestStore } from '../helpers/store.js';
 
-let db: Awaited<ReturnType<typeof createTestDb>>;
+let ts: TestStore;
 let r: Repos;
-beforeEach(async () => { db = await createTestDb(); r = createRepos(db.db); });
-afterEach(async () => { await db.close(); });
+beforeEach(async () => { ts = await createTestStore(); r = createRepos(ts.store); });
+afterEach(async () => { await ts.cleanup(); });
 const at = (hhmmss: string) => new Date(`2026-01-01T${hhmmss}Z`);
 
 describe('cooldown claims (atomic)', () => {
-  it('20 simultaneous claims for one aircraft: exactly one wins', async () => {
-    const results = await Promise.all(Array.from({ length: 20 }, () => r.cooldowns.tryClaim('X1', 'Cs[USAF]', 'IND', at('12:00:00'), ALERT_COOLDOWN_MS)));
+  it('50 simultaneous claims for one aircraft: exactly one wins', async () => {
+    const results = await Promise.all(Array.from({ length: 50 }, () => r.cooldowns.tryClaim('X1', 'Cs[USAF]', 'IND', at('12:00:00'), ALERT_COOLDOWN_MS)));
     expect(results.filter((x) => x.claimed)).toHaveLength(1);
     expect((await r.cooldowns.get('X1'))!.alertCount).toBe(1);
   });

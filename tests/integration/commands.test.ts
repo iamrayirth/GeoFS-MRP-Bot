@@ -1,5 +1,5 @@
 import { PermissionFlagsBits } from 'discord.js';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../../src/config.js';
 import type { BotContext } from '../../src/discord/context.js';
 import { commandJson, commandMap } from '../../src/discord/commands/index.js';
@@ -7,14 +7,14 @@ import { createHarness, geo, log, obs, PLACE, snapshot, t, type Harness } from '
 
 let h: Harness;
 let ctx: BotContext;
-const baseCfg = (extra: Record<string, string> = {}) => loadConfig({ DISCORD_TOKEN: 'x'.repeat(30), DATABASE_URL: 'postgres://x', ...extra });
+const baseCfg = (extra: Record<string, string> = {}) => loadConfig({ DISCORD_TOKEN: 'x'.repeat(30), ...extra });
 
 beforeEach(async () => {
   h = await createHarness({ identifiers: [], countries: [], configured: false });
   ctx = {
-    cfg: baseCfg(), log, repos: h.repos, runtime: h.config, tracker: h.tracker, alerts: h.manager, directory: h.dir, geo: geo(), names: h.names, startedAt: new Date(),
+    cfg: baseCfg(), log, repos: h.repos, runtime: h.config, tracker: h.tracker, alerts: h.manager, directory: h.dir, geo: geo(), names: h.names, osprey: null, startedAt: new Date(),
     monitor: { poller: { state: { lastSuccessAt: new Date(), totalPolls: 1, totalFailures: 0, lastError: null } }, stats: { totalAlertsSent: 0, lastCycle: null } } as never,
-    health: { check: async () => ({ status: 'ok', checks: { database: { ok: true }, discord: { ok: true, wsPingMs: 40 }, geofs: { ok: true, ageSeconds: 3, consecutiveFailures: 0, lastError: null, lastSuccessAt: null }, geodata: { ok: true, polygons: 6154 } }, uptimeSeconds: 5, memoryMb: 300 }) } as never,
+    health: { check: async () => ({ status: 'ok', checks: { storage: { ok: true, lastWriteAt: null, lastWriteError: null }, osprey: { enabled: false, ok: null, lastSuccessAt: null, consecutiveFailures: 0, lastError: null }, discord: { ok: true, wsPingMs: 40 }, geofs: { ok: true, ageSeconds: 3, consecutiveFailures: 0, lastError: null, lastSuccessAt: null }, geodata: { ok: true, polygons: 6154 } }, uptimeSeconds: 5, memoryMb: 300 }) } as never,
   };
 });
 afterEach(async () => { await h.close(); });
@@ -45,7 +45,7 @@ const ADMIN = { admin: true };
 describe('command definitions', () => {
   it('all commands serialise to valid Discord payloads (builders validate)', () => {
     const j = commandJson();
-    expect(j.map((c) => c.name).sort()).toEqual(['aircraft', 'country', 'health', 'help', 'identifier', 'ignore', 'ignored', 'settings', 'status', 'unignore']);
+    expect(j.map((c) => c.name).sort()).toEqual(['aircraft', 'country', 'health', 'help', 'ident', 'identifier', 'ignore', 'ignored', 'roster', 'settings', 'status', 'unignore']);
     const sub = (n: string) => j.find((c) => c.name === n)!.options!.map((o: any) => o.name).sort();
     expect(sub('identifier')).toEqual(['add', 'list', 'remove']);
     expect(sub('country')).toEqual(['add', 'list', 'remove']);
@@ -203,5 +203,69 @@ describe('/aircraft', () => {
     const info = await run('aircraft', 'info', { aircraft: 'A1' });
     for (const needle of ['Boeing 737-700', 'India', 'FL350', '420 KTS', '270°', 'remaining', 'Not ignored', '[USAF]']) expect(info).toContain(needle);
     expect(await run('aircraft', 'info', { aircraft: 'zzz' })).toMatch(/No tracked aircraft/);
+  });
+});
+
+describe('/ident and /roster (Osprey)', () => {
+  const identity = { accountId: '2145266', callsign: 'Charlie[USAF]', online: true, pastCallsigns: ['OldName'], lastLoginAt: new Date('2026-11-05T09:30:00Z'), createdAt: null };
+  const withOsprey = (o: Record<string, unknown>) => { ctx = { ...ctx, osprey: o as never }; };
+  async function seed() {
+    await h.config.addIdentifier('[USAF]', '[usaf]', 'u');
+    const at = t('12:00');
+    h.tracker.ingest(snapshot([obs({ id: 'A1', callsign: 'Charlie[USAF]', accountId: 2145266, ...PLACE.delhi })], at), h.config.identifiers, at);
+  }
+
+  it('say so when the integration is disabled', async () => {
+    expect(await run('ident', null, { pilot: 'x' })).toMatch(/disabled/);
+    expect(await run('roster', null)).toMatch(/disabled/);
+  });
+
+  it('/ident combines live GeoFS data with the Osprey identity (looked up by account id, then callsign)', async () => {
+    await seed();
+    const lookup = vi.fn(async () => ({ status: 'ok', identity, via: 'acid' }));
+    withOsprey({ lookup });
+    const out = await run('ident', null, { pilot: 'charlie[usaf]' });
+    expect(lookup).toHaveBeenCalledWith({ accountId: 2145266, callsign: 'Charlie[USAF]' });
+    for (const needle of ['IDENT', '`A1`', 'Boeing 737-700', 'India', 'FL350', 'Account ID: `2145266`', '`OldName`', 'Last login', 'GeoFS Live + Osprey V2', 'matched by account ID']) expect(out).toContain(needle);
+  });
+
+  it('/ident for an offline pilot uses Osprey only; unknown pilots and outages are explicit', async () => {
+    const lookup = vi.fn();
+    withOsprey({ lookup });
+    lookup.mockResolvedValueOnce({ status: 'ok', identity: { ...identity, callsign: 'Ghost' }, via: 'callsign' });
+    const out = await run('ident', null, { pilot: 'Ghost' });
+    expect(lookup).toHaveBeenCalledWith({ accountId: null, callsign: 'Ghost' });
+    expect(out).toContain('Not currently online in GeoFS'); expect(out).toContain('exact callsign');
+    lookup.mockResolvedValueOnce({ status: 'not_found' });
+    expect(await run('ident', null, { pilot: 'Nobody' })).toMatch(/not online in GeoFS and Osprey has no exact-callsign match/);
+    await seed();
+    lookup.mockResolvedValueOnce({ status: 'unavailable', error: 'HTTP 502' });
+    const down = await run('ident', null, { pilot: 'A1' });
+    expect(down).toContain('Unavailable right now (HTTP 502)');
+    expect(down).toContain('Boeing 737-700'); // the GeoFS half still works
+  });
+
+  it('/roster lists Osprey accounts for the configured identifiers and flags the ones visible in GeoFS', async () => {
+    await seed();
+    const roster = vi.fn(async () => ({ status: 'ok', truncated: false, entries: [
+      { ...identity },
+      { accountId: '9', callsign: 'Sleepy[USAF]', online: false, pastCallsigns: [], lastLoginAt: null, createdAt: null },
+    ] }));
+    withOsprey({ roster });
+    const out = await run('roster', null);
+    expect(roster).toHaveBeenCalledWith(['[USAF]']);
+    expect(out).toContain('2 Osprey account(s)'); expect(out).toContain('1 visible in GeoFS now');
+    expect(out).toMatch(/Charlie.*in GeoFS.*India/); expect(out).toMatch(/Sleepy.*offline/);
+  });
+
+  it('/roster edge cases: no identifiers, outage, empty result', async () => {
+    const roster = vi.fn();
+    withOsprey({ roster });
+    expect(await run('roster', null)).toMatch(/No identifiers configured/);
+    await h.config.addIdentifier('[USAF]', '[usaf]', 'u');
+    roster.mockResolvedValueOnce({ status: 'unavailable', error: 'timeout' });
+    expect(await run('roster', null)).toMatch(/Osprey is unavailable right now \(timeout\)/);
+    roster.mockResolvedValueOnce({ status: 'ok', entries: [], truncated: false });
+    expect(await run('roster', null)).toMatch(/no accounts matching/);
   });
 });

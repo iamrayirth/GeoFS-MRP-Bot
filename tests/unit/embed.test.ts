@@ -7,7 +7,7 @@ const IN = { iso3: 'IND', iso2: 'IN', name: 'India' };
 const base = (o: Partial<AlertPayload> = {}): AlertPayload => ({
   kind: 'entered', aircraftId: '123456', callsign: 'Charlie[USAF]', matchedIdentifiers: ['[USAF]'], aircraftTypeLabel: 'Boeing 737-800',
   lat: 28.6139, lon: 77.209, altitudeM: 10668, speedKts: 420, headingDeg: 270, country: IN, otherClaimants: [], territory: 'India', tier: 'land',
-  snapped: false, detectedAt: new Date('2026-01-01T12:00:00Z'), channelId: '1', roleId: '999', ...o,
+  snapped: false, detectedAt: new Date('2026-01-01T12:00:00Z'), osprey: { status: 'disabled' }, channelId: '1', roleId: '999', ...o,
 });
 const fields = (p: AlertPayload) => Object.fromEntries(buildAlertMessage(p).embeds[0]!.toJSON().fields!.map((f) => [f.name, f.value]));
 
@@ -66,6 +66,30 @@ describe('alert embed', () => {
     const total = (e.title?.length ?? 0) + e.fields!.reduce((n, f) => n + f.name.length + f.value.length, 0) + (e.footer?.text.length ?? 0);
     expect(total).toBeLessThanOrEqual(6000);
     expect(e.fields!.length).toBeLessThanOrEqual(25);
+  });
+});
+
+describe('Osprey identity in the embed', () => {
+  const id = { accountId: '2145266', callsign: 'Charlie', online: true, pastCallsigns: ['A', 'B', 'C', 'D', 'E', 'F', 'G'], lastLoginAt: new Date('2026-11-05T09:30:00Z'), createdAt: new Date('2024-02-03T00:00:00Z') };
+  it('shows only what Osprey returned, caps aliases, and marks the footer', () => {
+    const m = buildAlertMessage(base({ osprey: { status: 'ok', identity: id } }));
+    const f = fields(base({ osprey: { status: 'ok', identity: id } }));
+    expect(f['Osprey identity']).toContain('Account ID: `2145266`');
+    expect(f['Osprey identity']).toContain('+2 more');
+    expect(f['Osprey identity']).toContain('Account created: <t:');
+    expect(m.embeds[0]!.toJSON().footer!.text).toContain('Osprey V2');
+    expect(fields(base({ osprey: { status: 'ok', identity: { ...id, pastCallsigns: [], lastLoginAt: null, createdAt: null, online: null } } }))['Osprey identity']).toBe('Account ID: `2145266`');
+  });
+  it('is explicit when Osprey has nothing or is down, and absent when disabled', () => {
+    expect(fields(base({ osprey: { status: 'not_found' } }))['Osprey identity']).toBe('No Osprey record found');
+    expect(fields(base({ osprey: { status: 'unavailable' } }))['Osprey identity']).toBe('Lookup unavailable');
+    expect(fields(base())['Osprey identity']).toBeUndefined();
+  });
+  it('hostile alias data stays within Discord limits', () => {
+    const e = buildAlertMessage(base({ osprey: { status: 'ok', identity: { ...id, pastCallsigns: Array(50).fill('`@everyone**' + 'x'.repeat(500)) } } })).embeds[0]!.toJSON();
+    expect(e.fields!.every((f) => f.value.length <= 1024)).toBe(true);
+    const total = (e.title?.length ?? 0) + e.fields!.reduce((n, f) => n + f.name.length + f.value.length, 0) + (e.footer?.text.length ?? 0);
+    expect(total).toBeLessThanOrEqual(6000);
   });
 });
 
